@@ -1,0 +1,53 @@
+name: Deploy to Minikube
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: ✅ Checkout
+      uses: actions/checkout@v3
+
+    - name: ⚙️ Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: 🛠️ Build Spring Boot App
+      run: ./gradlew clean build -x test
+
+    - name: 🐳 Build Docker Image
+      run: |
+        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest .
+
+    - name: 🔐 Login to DockerHub
+      run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+    - name: 📦 Push to DockerHub
+      run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+
+    - name: 🚀 Deploy to Minikube via SSH
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          echo "[1/4] ✅ Pull Docker image"
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+          
+          echo "[2/4] 🔄 Remove existing deployment"
+          kubectl delete deployment spring-app --ignore-not-found
+          kubectl delete service spring-service --ignore-not-found
+          
+          echo "[3/4] 🚢 Deploy new version"
+          kubectl create deployment spring-app --image=${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+          kubectl expose deployment spring-app --type=NodePort --port=8080 --name=spring-service
+
+          echo "[4/4] 🌐 Get service URL"
+          minikube service spring-service --url
