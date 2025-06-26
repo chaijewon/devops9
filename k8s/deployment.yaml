@@ -1,0 +1,37 @@
+name: CI/CD to Minikube
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Build JAR
+      run: ./gradlew clean build -x test
+
+    - name: Build Docker Image
+      run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest .
+
+    - name: Push to DockerHub
+      run: |
+        echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+
+    - name: SSH to Server & Deploy
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+          kubectl delete deployment spring-app --ignore-not-found
+          kubectl delete service spring-service --ignore-not-found
+          kubectl create deployment spring-app --image=${{ secrets.DOCKERHUB_USERNAME }}/spring-app:latest
+          kubectl expose deployment spring-app --type=NodePort --port=8080 --name=spring-service
